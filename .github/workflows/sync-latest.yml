@@ -1,0 +1,43 @@
+# ArkMind App 自动检查更新的 jsDelivr fallback 源：
+# release 被 Publish 时把版本号写入 main 分支 latest.json 并 purge CDN 缓存。
+# latest.json 只含 version 字段——下载 URL 由客户端硬编码仓库 slug 构造（防镜像投毒重定向）。
+name: Sync latest.json on publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update latest.json to this release tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = context.release.tag_name.replace(/^v/, '');
+            const content = Buffer.from(JSON.stringify({ version }, null, 2) + '\n').toString('base64');
+            let sha;
+            try {
+              const { data } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: 'latest.json'
+              });
+              sha = data.sha;
+            } catch (_) { /* 首次创建，无既有文件 */ }
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: 'latest.json',
+              message: `chore: latest.json → ${version}`,
+              content,
+              ...(sha ? { sha } : {})
+            });
+            console.log(`latest.json → ${version}`);
+
+      - name: Purge jsDelivr cache
+        run: curl -sS "https://purge.jsdelivr.net/gh/${{ github.repository }}@main/latest.json" || true
